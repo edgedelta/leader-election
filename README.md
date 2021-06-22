@@ -1,3 +1,7 @@
+
+![Build](https://github.com/edgedelta/leader-election/actions/workflows/go.yml/badge.svg)
+
+
 ## Kubernetes Leader Election Library for Go
 
 This library provides a thin wrapper for kubernetes leader election. It can be used to elect a leader between multiple replica deployments/daemonsets. Behind the scenes kubernetes lease objects are used to persist leader information.
