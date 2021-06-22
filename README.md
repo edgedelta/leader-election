@@ -14,12 +14,19 @@ go get github.com/edgedelta/leader-election
 ### Example usage
 
 ```go
+
+import (
+    ...
+
+    "github.com/edgedelta/leader-election"
+)
+
 func main() {
-  le, err := New(
-    WithleaseDuration(15*time.Second),
-    WithRenewTime(10*time.Second),
-    WithRetryPeriod(2*time.Second),
-    WithLeaseNamespace("custom-ns"))
+  le, err := leaderelection.New(
+    leaderelection.WithleaseDuration(15*time.Second),
+    leaderelection.WithRenewTime(10*time.Second),
+    leaderelection.WithRetryPeriod(2*time.Second),
+    leaderelection.WithLeaseNamespace("custom-ns"))
 
   if err != nil {
     // Handle error
@@ -29,7 +36,7 @@ func main() {
     // Handle error
   }
 
-  // run the leader election check
+  // run the leader election based logic
   ctx, cancel := context.WithCancel(context.Background())
   go run(le, ctx)
 
@@ -38,15 +45,14 @@ func main() {
   signal.Notify(termSignal, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
   <-termSignal
 
-  // stop the leader election check
+  // stop leader election engine
   cancel()
-
   if err := le.Stop(); err != nil {
     // Handle error
   }
 }
 
-func run(le *K8sLeaderEngine, ctx context.Context) {
+func run(le *leaderelection.K8sLeaderEngine, ctx context.Context) {
   // do leader stuff as long as le.IsLeader() and ctx is not Done
 }
 ```
