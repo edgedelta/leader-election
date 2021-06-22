@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff"
-	"github.com/pingcap/errors"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
