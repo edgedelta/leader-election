@@ -23,7 +23,7 @@ import (
 
 func main() {
   le, err := leaderelection.New(
-    leaderelection.WithleaseDuration(15*time.Second),
+    leaderelection.WithLeaseDuration(15*time.Second),
     leaderelection.WithRenewTime(10*time.Second),
     leaderelection.WithRetryPeriod(2*time.Second),
     leaderelection.WithLeaseNamespace("custom-ns"))
