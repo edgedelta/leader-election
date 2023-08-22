@@ -17,10 +17,11 @@ import (
 )
 
 const (
-	defaultleaseName           = "leader-election-lease"
-	defaultleaseDuration       = 60 * time.Second
-	defaultrenewDeadline       = 30 * time.Second
-	defaultretryPeriod         = 15 * time.Second
+	defaultLeaseName     = "leader-election-lease"
+	defaultLeaseDuration = 60 * time.Second
+	defaultRenewDeadline = 30 * time.Second
+	defaultRetryPeriod   = 15 * time.Second
+
 	timeoutRunLeaderEngine     = 15 * time.Second
 	defaultRandomizationFactor = 0.5
 )
@@ -46,7 +47,7 @@ var (
 	maxRetryDelay     = 5 * time.Minute
 )
 
-func WithleaseDuration(dur time.Duration) K8sLeaderEngineOption {
+func WithLeaseDuration(dur time.Duration) K8sLeaderEngineOption {
 	return func(le *K8sLeaderEngine) {
 		le.leaseDuration = dur
 	}
@@ -102,10 +103,10 @@ func WithErrorLogger(logger Logger) K8sLeaderEngineOption {
 
 func New(opts ...K8sLeaderEngineOption) (*K8sLeaderEngine, error) {
 	e := &K8sLeaderEngine{
-		leaseName:     defaultleaseName,
-		leaseDuration: defaultleaseDuration,
-		renewDeadline: defaultrenewDeadline,
-		retryPeriod:   defaultretryPeriod,
+		leaseName:     defaultLeaseName,
+		leaseDuration: defaultLeaseDuration,
+		renewDeadline: defaultRenewDeadline,
+		retryPeriod:   defaultRetryPeriod,
 		logger:        &defaultLogger{},
 		errorLogger:   &defaultLogger{},
 		stopped:       make(chan struct{}),
