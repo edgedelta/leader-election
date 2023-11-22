@@ -32,7 +32,7 @@ func (le *K8sLeaderEngine) newLeaderElector(ctx context.Context) (*ld.LeaderElec
 	callbacks := ld.LeaderCallbacks{
 		OnNewLeader: func(identity string) {
 			le.updateLeaderIdentity(identity)
-			le.logger.Log("New leader selected for lease name %q and namespace %q, new leader is %q", le.leaseName, le.leaseNamespace, identity)
+			le.logger.Log("New leader selected for lease name: %q and namespace: %q, new leader is %q", le.leaseName, le.leaseNamespace, identity)
 		},
 		OnStartedLeading: func(ctx context.Context) {
 			le.updateLeaderIdentity(le.holderIdentity)
@@ -107,7 +107,7 @@ func (le *K8sLeaderEngine) ensureLeaseCreated(ctx context.Context) error {
 	}
 
 	if !errors.IsConflict(err) || errors.IsAlreadyExists(err) {
-		return fmt.Errorf("failed to create lease %s, err: %v", le.leaseName, err)
+		return fmt.Errorf("failed to create lease: %s, err: %v", le.leaseName, err)
 	}
 
 	return nil
@@ -121,7 +121,7 @@ func (le *K8sLeaderEngine) getCurrentLeader(ctx context.Context) (string, *coord
 
 	value, ok := lease.Annotations[rl.LeaderElectionRecordAnnotationKey]
 	if !ok {
-		le.logger.Log("The lease has no annotation with respect to leader selection, no one is leading at the namespace %q with respect to key %q", le.leaseNamespace, rl.LeaderElectionRecordAnnotationKey)
+		le.logger.Log("The lease has no annotation with respect to leader selection, no one is leading at the namespace: %q with respect to key: %q", le.leaseNamespace, rl.LeaderElectionRecordAnnotationKey)
 		return "", lease, nil
 	}
 
@@ -135,7 +135,25 @@ func (le *K8sLeaderEngine) getCurrentLeader(ctx context.Context) (string, *coord
 
 func (le *K8sLeaderEngine) updateLeaderIdentity(leaderIdentity string) {
 	le.leaderIdentityMutex.Lock()
-	defer le.leaderIdentityMutex.Unlock()
-
+	previousLeader := le.currentLeaderIdentity
 	le.currentLeaderIdentity = leaderIdentity
+	le.leaderIdentityMutex.Unlock()
+
+	payload := &NewLeaderPayload{
+		CurrentlyLeading: le.IsLeader(),
+		OldLeader:        previousLeader,
+		NewLeader:        leaderIdentity,
+	}
+
+	le.subscribersMu.Lock()
+	defer le.subscribersMu.Unlock()
+	for name, subscriber := range le.subscribers {
+		name := name
+		subscriber := subscriber
+		go func() {
+			if err := subscriber.NewLeader(payload); err != nil {
+				le.errorLogger.Log("Failed to send new leader event to subscriber: %q, err: %v", name, err)
+			}
+		}()
+	}
 }

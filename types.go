@@ -3,6 +3,7 @@ package leaderelection
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -12,9 +13,20 @@ import (
 	leaderelection "k8s.io/client-go/tools/leaderelection"
 )
 
+type NewLeaderPayload struct {
+	CurrentlyLeading bool
+	OldLeader        string
+	NewLeader        string
+}
+
+type LeaderEngineSubscriber interface {
+	Name() string
+	NewLeader(payload *NewLeaderPayload) error
+}
+
 type K8sLeaderEngine struct {
-	running int32
-	stopped chan struct{}
+	isRunning atomic.Bool
+	stopped   chan struct{}
 
 	parentCtx context.Context
 	ctx       context.Context
@@ -33,6 +45,9 @@ type K8sLeaderEngine struct {
 	leaderElector         *leaderelection.LeaderElector
 	leaderIdentityMutex   sync.Mutex
 	currentLeaderIdentity string
+
+	subscribersMu sync.Mutex
+	subscribers   map[string]LeaderEngineSubscriber
 
 	logger      Logger
 	errorLogger Logger

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff"
@@ -110,6 +109,7 @@ func New(opts ...K8sLeaderEngineOption) (*K8sLeaderEngine, error) {
 		logger:        &defaultLogger{},
 		errorLogger:   &defaultLogger{},
 		stopped:       make(chan struct{}),
+		subscribers:   make(map[string]LeaderEngineSubscriber),
 	}
 
 	for _, o := range opts {
@@ -133,7 +133,7 @@ func New(opts ...K8sLeaderEngineOption) (*K8sLeaderEngine, error) {
 
 // Start the leader engine and block until a leader is elected.
 func (le *K8sLeaderEngine) Start() error {
-	if !atomic.CompareAndSwapInt32(&le.running, 0, 1) {
+	if !le.isRunning.CompareAndSwap(false, true) {
 		return fmt.Errorf("leader engine is already started")
 	}
 
@@ -157,14 +157,42 @@ func (le *K8sLeaderEngine) Start() error {
 
 // Stop the engine and wait until the goroutines have stopped
 func (le *K8sLeaderEngine) Stop() error {
-	if !atomic.CompareAndSwapInt32(&le.running, 1, 0) {
+	if !le.isRunning.CompareAndSwap(true, false) {
 		return fmt.Errorf("leader engine is not started or already stopped")
 	}
 
 	le.ctxCancel()
-	le.logger.Log("Leader election engine cancelled internal context, will wait until stopped signal is recieved")
+	le.logger.Log("Leader election engine cancelled internal context, will wait until stopped signal is received")
 	<-le.stopped
 	le.logger.Log("Leader election engine stopped")
+	return nil
+}
+
+func (le *K8sLeaderEngine) Subscribe(subscriber LeaderEngineSubscriber) {
+	le.subscribersMu.Lock()
+	defer le.subscribersMu.Unlock()
+
+	subscriberName := subscriber.Name()
+	_, ok := le.subscribers[subscriberName]
+	if ok {
+		le.logger.Log("Already have a subscriber with name: %q, skipping", subscriber)
+		return
+	}
+
+	le.subscribers[subscriberName] = subscriber
+}
+
+func (le *K8sLeaderEngine) Unsubscribe(subscriber LeaderEngineSubscriber) error {
+	le.subscribersMu.Lock()
+	defer le.subscribersMu.Unlock()
+
+	subscriberName := subscriber.Name()
+	_, ok := le.subscribers[subscriberName]
+	if ok {
+		return fmt.Errorf("there is no subscriber with name: %q", subscriberName)
+	}
+
+	delete(le.subscribers, subscriberName)
 	return nil
 }
 
@@ -187,7 +215,7 @@ func (le *K8sLeaderEngine) initializeLeaderEngine() error {
 		}
 	}
 
-	le.logger.Log("Initializing leader engine with holder identity %q", le.holderIdentity)
+	le.logger.Log("Initializing leader engine with holder identity: %q", le.holderIdentity)
 
 	apiClient, err := GetAPIClient()
 	if err != nil {
@@ -198,7 +226,7 @@ func (le *K8sLeaderEngine) initializeLeaderEngine() error {
 	le.coordinationClient = apiClient.CoordinationV1()
 	_, err = le.coordinationClient.Leases(le.leaseNamespace).Get(le.parentCtx, le.leaseName, metav1.GetOptions{})
 	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to obtain leases from namespace %q, err: %v", le.leaseNamespace, err)
+		return fmt.Errorf("failed to obtain leases from namespace: %q, err: %v", le.leaseNamespace, err)
 	}
 
 	le.leaderElector, err = le.newLeaderElector(le.parentCtx)
@@ -211,7 +239,7 @@ func (le *K8sLeaderEngine) initializeLeaderEngine() error {
 
 func (le *K8sLeaderEngine) runLeaderEngine() {
 	for {
-		le.logger.Log("Starting leader election process for %q under namespace %q", le.holderIdentity, le.leaseNamespace)
+		le.logger.Log("Starting leader election process for %q under namespace: %q", le.holderIdentity, le.leaseNamespace)
 		le.leaderElector.Run(le.ctx)
 		select {
 		case <-le.ctx.Done():
@@ -241,7 +269,7 @@ func (le *K8sLeaderEngine) getLocalResourceNamespace() string {
 	}
 	ns, err := os.ReadFile(namespaceFilePath)
 	if err != nil {
-		le.logger.Log("Failed to access namespace file %q, err: %v. Will use 'default' namespace.", err)
+		le.logger.Log("Failed to access namespace file: %q, err: %v. Will use 'default' namespace.", err)
 		return "default"
 	}
 	return string(ns)
