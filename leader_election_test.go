@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,6 +13,10 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	k8s "k8s.io/client-go/kubernetes"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func TestLeaderEngineError(t *testing.T) {
@@ -23,6 +29,106 @@ func TestLeaderEngineError(t *testing.T) {
 	if err == nil {
 		t.Errorf("Failed to obtain timeout error")
 	}
+}
+
+func TestInitializeLeaderEngineFailsFastOnRBACError(t *testing.T) {
+	cases := []struct {
+		desc     string
+		reactErr error
+	}{
+		{
+			desc: "forbidden",
+			reactErr: errors.NewForbidden(
+				schema.GroupResource{Group: "coordination.k8s.io", Resource: "leases"},
+				"leader-election-lease",
+				fmt.Errorf("rbac"),
+			),
+		},
+		{
+			desc:     "unauthorized",
+			reactErr: errors.NewUnauthorized("not authorized"),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			var callCount atomic.Int32
+			client := fake.NewSimpleClientset()
+			client.PrependReactor("get", "leases", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+				callCount.Add(1)
+				return true, nil, tc.reactErr
+			})
+
+			restoreAPIClient := overrideGetAPIClient(client)
+			defer restoreAPIClient()
+
+			currentRetryDelay := maxRetryDelay
+			maxRetryDelay = 5 * time.Second
+			defer func() {
+				maxRetryDelay = currentRetryDelay
+			}()
+
+			_, err := New(
+				WithLeaseNamespace("test-namespace"),
+				WithLogger(&testLogger{t: t}),
+				WithErrorLogger(&testLogger{t: t}),
+			)
+
+			if err == nil {
+				t.Fatalf("%s: got: nil error, want: non-nil error", tc.desc)
+			}
+			if !strings.Contains(err.Error(), "failed to obtain leases from namespace") {
+				t.Errorf("%s: error message mismatch: got: %v, want: contains %q", tc.desc, err, "failed to obtain leases from namespace")
+			}
+			if c := callCount.Load(); c != 1 {
+				t.Errorf("%s: did not fail fast: got: %d call(s), want: 1", tc.desc, c)
+			}
+		})
+	}
+}
+
+func TestInitializeLeaderEngineRetriesOnTransientError(t *testing.T) {
+	var callCount atomic.Int32
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("get", "leases", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+		callCount.Add(1)
+		return true, nil, errors.NewServerTimeout(
+			schema.GroupResource{Group: "coordination.k8s.io", Resource: "leases"},
+			"get",
+			1,
+		)
+	})
+
+	restoreAPIClient := overrideGetAPIClient(client)
+	defer restoreAPIClient()
+
+	currentMax := maxRetryDelay
+	currentInitial := initialRetryDelay
+	maxRetryDelay = 500 * time.Millisecond
+	initialRetryDelay = 50 * time.Millisecond
+	defer func() {
+		maxRetryDelay = currentMax
+		initialRetryDelay = currentInitial
+	}()
+
+	_, err := New(
+		WithLeaseNamespace("test-namespace"),
+		WithLogger(&testLogger{t: t}),
+		WithErrorLogger(&testLogger{t: t}),
+	)
+
+	if err == nil {
+		t.Fatalf("got: nil error, want: timeout error after retries")
+	}
+	if c := callCount.Load(); c < 2 {
+		t.Errorf("transient error did not retry: got: %d call(s), want: >= 2", c)
+	}
+}
+
+func overrideGetAPIClient(client k8s.Interface) func() {
+	original := GetAPIClient
+	GetAPIClient = func() (k8s.Interface, error) { return client, nil }
+	return func() { GetAPIClient = original }
 }
 
 func TestLeaseAcquirement(t *testing.T) {
