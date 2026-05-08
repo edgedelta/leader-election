@@ -226,7 +226,12 @@ func (le *K8sLeaderEngine) initializeLeaderEngine() error {
 	le.coordinationClient = apiClient.CoordinationV1()
 	_, err = le.coordinationClient.Leases(le.leaseNamespace).Get(le.parentCtx, le.leaseName, metav1.GetOptions{})
 	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to obtain leases from namespace: %q, err: %v", le.leaseNamespace, err)
+		wrapped := fmt.Errorf("failed to obtain leases from namespace: %q, err: %v", le.leaseNamespace, err)
+		// Forbidden / Unauthorized are RBAC misconfigurations that won't resolve via retry; fail fast.
+		if errors.IsForbidden(err) || errors.IsUnauthorized(err) {
+			return backoff.Permanent(wrapped)
+		}
+		return wrapped
 	}
 
 	le.leaderElector, err = le.newLeaderElector(le.parentCtx)
